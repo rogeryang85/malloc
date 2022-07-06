@@ -44,7 +44,9 @@
 #endif /* def DRIVER */
 
 /* You can change anything from here onward */
-
+#define SMALL 64
+#define MEDIUM 1024
+#define LARGE 8192
 /*
  *****************************************************************************
  * If DEBUG is defined (such as when running mdriver-dbg), these macros      *
@@ -82,11 +84,10 @@
  * I checked.
  *   -zw 2022-07-15
  */
-#define dbg_discard_expr_(expr) \
-    (_Pragma("GCC diagnostic push") \
-     _Pragma("GCC diagnostic ignored \"-Wunused-value\"") \
-     (void) (0 && (expr)) \
-     _Pragma("GCC diagnostic pop"))
+#define dbg_discard_expr_(expr)                                                \
+    (_Pragma("GCC diagnostic push") _Pragma(                                   \
+        "GCC diagnostic ignored \"-Wunused-value\"")(void)(0 && (expr))        \
+         _Pragma("GCC diagnostic pop"))
 #define dbg_requires(expr) dbg_discard_expr_(expr)
 #define dbg_assert(expr) dbg_discard_expr_(expr)
 #define dbg_ensures(expr) dbg_discard_expr_(expr)
@@ -116,13 +117,12 @@ static const size_t chunksize = (1 << 12);
 /**
  * TODO: explain what alloc_mask is
  */
-static const word_t alloc_mask = 0x1; 
+static const word_t alloc_mask = 0x1;
 
 /**
  * TODO: explain what size_mask is
  */
 static const word_t size_mask = ~(word_t)0xF;
-
 
 /** @brief Represents the header and payload of one block in the heap */
 typedef struct block {
@@ -150,13 +150,12 @@ typedef struct block {
      * in order to store additional types of data in the payload memory.
      */
     union {
-        struct{
-            struct block* prev; 
-            struct block* next; 
+        struct {
+            struct block *prev;
+            struct block *next;
         };
         char payload[0];
-    
-    }; 
+    };
 
     /*
      * TODO: delete or replace this comment once you've thought about it.
@@ -166,27 +165,23 @@ typedef struct block {
      */
 } block_t;
 
-
 /* Global variables */
 
 /** @brief Pointer to first block in the heap */
 static block_t *heap_start = NULL;
-static block_t *heap_end = NULL; 
+static block_t *heap_end = NULL;
 
-static block_t *list16_root = NULL; 
-static block_t *list16_tail = NULL; 
+static block_t *small_root = NULL;
+static block_t *small_tail = NULL;
 
-static block_t *list32_root = NULL; 
-static block_t *list32_tail = NULL; 
+static block_t *medium_root = NULL;
+static block_t *medium_tail = NULL;
 
-static block_t *list64_root = NULL; 
-static block_t *list64_tail = NULL; 
+static block_t *large_root = NULL;
+static block_t *large_tail = NULL;
 
-
-static block_t *listMAX_root = NULL; 
-static block_t *listMAX_tail = NULL; 
-
-
+static block_t *MAX_root = NULL;
+static block_t *MAX_tail = NULL;
 
 /*
  *****************************************************************************
@@ -207,8 +202,6 @@ static block_t *listMAX_tail = NULL;
  *                        BEGIN SHORT HELPER FUNCTIONS
  * ---------------------------------------------------------------------------
  */
-
-
 
 /**
  * @brief Returns the maximum of two integers.
@@ -448,7 +441,117 @@ static block_t *find_prev(block_t *block) {
  */
 
 /******** The remaining content below are helper and debug routines ********/
+static void remove_block(block_t *block) {
+    if (block->prev == NULL && block->next == NULL) {
+        if (block == small_root) {
+            small_root = NULL;
+            small_tail = NULL;
+        }
+        if (block == medium_root) {
+            medium_root = NULL;
+            medium_tail = NULL;
+        }
+        if (block == large_root) {
+            large_root = NULL;
+            large_tail = NULL;
+        }
+        if (block == MAX_root) {
+            MAX_root = NULL;
+            MAX_tail = NULL;
+        }
+    } else if (block->prev == NULL && block->next != NULL) {
+        if (block == small_root) {
+            small_root = block->next;
+            block->next->prev = NULL;
+        }
+        if (block == medium_root) {
+            medium_root = block->next;
+            block->next->prev = NULL;
+        }
+        if (block == large_root) {
+            large_root = block->next;
+            block->next->prev = NULL;
+        }
+        if (block == MAX_root) {
+            MAX_root = block->next;
+            block->next->prev = NULL;
+        }
+    } else if (block->prev != NULL && block->next == NULL) {
+        if (block == small_tail) {
+            small_tail = block->prev;
+            block->prev->next = NULL;
+        }
+        if (block == medium_tail) {
+            medium_tail = block->prev;
+            block->prev->next = NULL;
+        }
+        if (block == large_tail) {
+            large_tail = block->prev;
+            block->prev->next = NULL;
+        }
+        if (block == MAX_tail) {
+            MAX_tail = block->prev;
+            block->prev->next = NULL;
+        }
+    } else {
+        block->prev->next = block->next;
+        block->next->prev = block->prev;
+    }
+}
 
+static block_t *insert(block_t *block) {
+    size_t curr_size = get_size(block);
+    if (curr_size < SMALL) {
+        if (small_root == NULL) {
+            small_root = block;
+            small_tail = block;
+            block->next = NULL;
+            block->prev = NULL;
+        } else {
+            block->next = NULL;
+            block->prev = small_tail;
+            small_tail->next = block;
+            small_tail = block;
+        }
+    } else if (SMALL <= curr_size && curr_size < MEDIUM) {
+        if (medium_root == NULL) {
+            medium_root = block;
+            medium_tail = block;
+            block->next = NULL;
+            block->prev = NULL;
+        } else {
+            block->next = NULL;
+            block->prev = medium_tail;
+            medium_tail->next = block;
+            medium_tail = block;
+        }
+    } else if (MEDIUM <= curr_size && curr_size < LARGE) {
+        if (large_root == NULL) {
+            large_root = block;
+            large_tail = block;
+            block->next = NULL;
+            block->prev = NULL;
+        } else {
+            block->next = NULL;
+            block->prev = large_tail;
+            large_tail->next = block;
+            large_tail = block;
+        }
+    } else {
+        if (MAX_root == NULL) {
+            MAX_root = block;
+            MAX_tail = block;
+            block->next = NULL;
+            block->prev = NULL;
+        } else {
+            block->next = NULL;
+            block->prev = MAX_tail;
+            MAX_tail->next = block;
+            MAX_tail = block;
+        }
+    }
+    return block;
+}
 /**
  * @brief
  *
@@ -461,183 +564,53 @@ static block_t *find_prev(block_t *block) {
  * @return
  */
 static block_t *coalesce_block(block_t *block) {
-    //First block in the heap 
-    bool is_next_alloc = get_alloc(find_next(block)); 
+    bool is_next_alloc = get_alloc(find_next(block));
     bool is_prev_alloc;
-    if(find_prev(block)==NULL){
-        is_prev_alloc = true; 
+    if (find_prev(block) == NULL) {
+        is_prev_alloc = true;
+    } else {
+        is_prev_alloc = get_alloc(find_prev(block));
     }
-    else{
-        is_prev_alloc= get_alloc(find_prev(block)); 
+    size_t size = get_size(block);
+    // Case 1: Allocated blocks on both sides
+    if (is_prev_alloc && is_next_alloc) {
+        size_t curr_size = size;
+        write_block(block, curr_size, false);
+        insert(block);
+        return block;
     }
-    size_t size = get_size(block); 
-    //Case 1: Allocated blocks on both sides 
-    if(is_prev_alloc&&is_next_alloc){
-        size_t curr_size = size; 
-        write_block(block, curr_size, false); 
-        if(curr_size < 16){ 
-            (*block).next = NULL; 
-            (*block).prev= list16_tail;
-            list16_tail = block;  
-            if(list16_root == NULL){
-                list16_root = block; 
-            }
-        }
-        if(16 <= curr_size && curr_size < 32){
-            (*block).next = NULL; 
-            (*block).prev= list32_tail;
-            list32_tail = block;  
-            if(list32_root == NULL){
-                list32_root = block; 
-            }
-        }
-        if(32 <= curr_size && curr_size < 64){
-            (*block).next = NULL; 
-            (*block).prev= list64_tail;
-            list64_tail = block;  
-            if(list64_root == NULL){
-                list64_root = block; 
-            }
-        }
-        if(64 <= curr_size){
-            (*block).next = NULL; 
-            (*block).prev= listMAX_tail;
-            listMAX_tail = block;  
-            if(listMAX_root == NULL){
-                listMAX_root = block; 
-            }
-        }
-        return block; 
-    }
-    //Case 2: Free blocks on both sides
-    else if(!is_prev_alloc&&!is_next_alloc){
-        block_t* left = footer_to_header(find_prev_footer(block)); 
-        block_t* right = find_next(block); 
-        size_t right_size = get_size(right); 
-        size_t left_size = get_size(left); 
+    // Case 2: Free blocks on both sides
+    else if (!is_prev_alloc && !is_next_alloc) {
+        block_t *left = footer_to_header(find_prev_footer(block));
+        block_t *right = find_next(block);
+        size_t right_size = get_size(right);
+        size_t left_size = get_size(left);
+        remove_block(left);
+        remove_block(right);
         write_block(left, left_size + right_size + size, false);
-
-        size_t curr_size = get_size(left); 
-        if(curr_size < 16){ 
-            left->next = NULL; 
-            left->prev= list16_tail;
-            list16_tail = left;  
-            if(list16_root == NULL){
-                list16_root = left; 
-            }
-        }
-        if(16 <= curr_size && curr_size < 32){
-            left->next = NULL; 
-            left->prev= list32_tail;
-            list32_tail = left;  
-            if(list32_root == NULL){
-                list32_root = left; 
-            }
-        }
-        if(32 <= curr_size && curr_size < 64){
-            left->next = NULL; 
-            left->prev= list64_tail;
-            list64_tail = left;  
-            if(list64_root == NULL){
-                list64_root = left; 
-            }
-        }
-        if(64 <= curr_size){
-            left->next = NULL; 
-            left->prev= listMAX_tail;
-            listMAX_tail = left;  
-            if(listMAX_root == NULL){
-                listMAX_root = left; 
-            }
-        }
+        insert(left);
         return left;
 
     }
-    //Case 3: Free block on the left and allocated block on right 
-    else if(!is_prev_alloc&&is_next_alloc){
-        block_t* left = footer_to_header(find_prev_footer(block)); 
-        size_t left_size = get_size(left); 
+    // Case 3: Free block on the left and allocated block on right
+    else if (!is_prev_alloc && is_next_alloc) {
+        block_t *left = footer_to_header(find_prev_footer(block));
+        size_t left_size = get_size(left);
+        remove_block(left);
         write_block(left, left_size + size, false);
-       
-        size_t curr_size = get_size(left); 
-        if(curr_size < 16){ 
-            left->next = NULL; 
-            left->prev= list16_tail;
-            list16_tail = left;  
-            if(list16_root == NULL){
-                list16_root = left; 
-            }
-        }
-        if(16 <= curr_size && curr_size < 32){
-            left->next = NULL; 
-            left->prev= list32_tail;
-            list32_tail = left;  
-            if(list32_root == NULL){
-                list32_root = left; 
-            }
-        }
-        if(32 <= curr_size && curr_size < 64){
-            left->next = NULL; 
-            left->prev= list64_tail;
-            list64_tail = left;  
-            if(list64_root == NULL){
-                list64_root = left; 
-            }
-        }
-        if(64 <= curr_size){
-            left->next = NULL; 
-            left->prev= listMAX_tail;
-            listMAX_tail = left;  
-            if(listMAX_root == NULL){
-                listMAX_root = left; 
-            }
-        }
-        return left; 
-
+        insert(left);
+        return left;
 
     }
-    //Case 4: Allocated block on the right and free block on left 
-    else{
-        block_t* right = find_next(block); 
-        size_t right_size = get_size(right); 
+    // Case 4: Allocated block on the left and free block on right
+    else {
+        block_t *right = find_next(block);
+        size_t right_size = get_size(right);
         write_block(block, right_size + size, false);
-        
-        size_t curr_size = get_size(block); 
-        if(curr_size < 16){ 
-            block->next = NULL; 
-            block->prev= list16_tail;
-            list16_tail = block;  
-            if(list16_root == NULL){
-                list16_root = block; 
-            }
-        }
-        if(16 <= curr_size && curr_size < 32){
-            block->next = NULL; 
-            block->prev= list32_tail;
-            list32_tail = block;  
-            if(list32_root == NULL){
-                list32_root = block; 
-            }
-        }
-        if(32 <= curr_size && curr_size < 64){
-            block->next = NULL; 
-            block->prev= list64_tail;
-            list64_tail = block;  
-            if(list64_root == NULL){
-                list64_root = block; 
-            }
-        }
-        if(64 <= curr_size){
-            block->next = NULL; 
-            block->prev= listMAX_tail;
-            listMAX_tail = block;  
-            if(listMAX_root == NULL){
-                listMAX_root = block; 
-            }
-        }
-        return block; 
+        remove_block(right);
+        insert(block);
+        return block;
     }
-
 }
 
 /**
@@ -667,7 +640,7 @@ static block_t *extend_heap(size_t size) {
     // Create new epilogue header
     block_t *block_next = find_next(block);
     write_epilogue(block_next);
-    heap_end = block_next; 
+    heap_end = block_next;
 
     // Coalesce in case the previous block was free
     block = coalesce_block(block);
@@ -698,6 +671,9 @@ static void split_block(block_t *block, size_t asize) {
 
         block_next = find_next(block);
         write_block(block_next, block_size - asize, false);
+        block_next->prev = NULL;
+        block_next->next = NULL;
+        coalesce_block(block_next);
     }
 
     dbg_ensures(get_alloc(block));
@@ -717,71 +693,68 @@ static void split_block(block_t *block, size_t asize) {
 static block_t *find_fit(size_t asize) {
     block_t *block;
 
-    if(asize < 16){
-        if(list16_root != NULL){
-            block = list16_root; 
-            while(block!=NULL && block != list16_tail){
-                if(get_size(block) >= asize){
-                    return block; 
+    if (asize < SMALL) {
+        if (small_root != NULL) {
+            block = small_root;
+            while (block != NULL) {
+                if (get_size(block) >= asize) {
+                    return block;
                 }
-                block = block->next; 
+                block = block->next;
             }
-        }    
-        if(list32_root != NULL){
-            return list32_root; 
         }
-        if(list64_root != NULL){
-            return list64_root; 
+        if (medium_root != NULL) {
+            return medium_root;
         }
-        if(listMAX_root != NULL){
-            return listMAX_root; 
+        if (large_root != NULL) {
+            return large_root;
         }
-        return NULL; 
-    }
-    if(16 <= asize && asize < 32){
-        if(list32_root != NULL){
-            block = list32_root; 
-            while(block!=NULL && block != list32_tail){
-                if(get_size(block) >= asize){
-                    return block; 
+        if (MAX_root != NULL) {
+            return MAX_root;
+        }
+        return NULL;
+    } else if (SMALL <= asize && asize < MEDIUM) {
+        if (large_root != NULL) {
+            return large_root;
+        }
+        if (MAX_root != NULL) {
+            return MAX_root;
+        }
+        if (medium_root != NULL) {
+            block = medium_root;
+            while (block != NULL) {
+                if (get_size(block) >= asize) {
+                    return block;
                 }
-                block = block->next; 
+                block = block->next;
             }
-        }    
-        if(list64_root != NULL){
-            return list64_root; 
         }
-        if(listMAX_root != NULL){
-            return listMAX_root; 
-        }
-        return NULL; 
-    }
-    if(32 <= asize && asize < 64){
-        if(list64_root != NULL){
-            block = list64_root; 
-            while(block!=NULL && block != list64_tail){
-                if(get_size(block) >= asize){
-                    return block; 
+        return NULL;
+    } else if (MEDIUM <= asize && asize < LARGE) {
+        if (large_root != NULL) {
+            block = large_root;
+            while (block != NULL) {
+                if (get_size(block) >= asize) {
+                    return block;
                 }
-                block = block->next; 
+                block = block->next;
             }
-        }    
-        if(listMAX_root != NULL){
-            return listMAX_root; 
         }
-        return NULL; 
-    }
-    if(64 <= asize){
-        if(listMAX_root != NULL){
-            block = listMAX_root; 
-            while(block!=NULL && block != listMAX_tail){
-                if(get_size(block) >= asize){
-                    return block; 
+        if (MAX_root != NULL) {
+            return MAX_root;
+        }
+        return NULL;
+    } else {
+        if (MAX_root != NULL) {
+            block = MAX_root;
+            while (block != NULL) {
+                if (get_size(block) >= asize) {
+                    return block;
                 }
-                block = block->next; 
+                block = block->next;
             }
-        }   
-        return NULL; 
+        }
+        return NULL;
     }
     return NULL; // no fit found
 }
@@ -798,108 +771,124 @@ static block_t *find_fit(size_t asize) {
  * @return
  */
 bool mm_checkheap(int line) {
-    //Checks consistency of HEAP 
-    if(heap_start == NULL || heap_end == NULL) return false; 
-    if(!(get_alloc(heap_start) && get_alloc(heap_end))) return false; 
-    if(!(get_size(heap_start)==0 && get_size(heap_end)==0)) return false; 
-    int free_count = 0; 
-    block_t* block = heap_start; 
-    while(block!= heap_end){
-        if(block == NULL) return false; 
-        word_t header = block->header; 
-        word_t* footer = header_to_footer(block); 
-        size_t size = get_size(block); 
-        bool isAlloc = get_alloc(block); 
-        if(!(block <= heap_end && block >= heap_start)) return false; 
-        if( (((word_t) (block -> payload)) & 0xF) == 0){
-            return false; 
-        }
-        if(header != (*footer)){
-            return false; 
-        }
-        if(size < min_block_size || size < 0){
-            return false; 
-        }
-        if(!isAlloc){
-            if(!get_alloc(find_next(block))){
-                return false; 
-            }
-            free_count++; 
-        }
-        block = find_next(block); 
-    }
-    int list_count = 0;
-    block = list16_root; 
-    while(block != list16_tail){
-        if(block == NULL) return false; 
-        block_t* next_block = block -> next; 
-        size_t size = get_size(block); 
-        if(!((char*) block <= (char*) mem_heap_hi() && (char*) mem_heap_lo() <= (char*) block)){
-            return false; 
-        }
-        if(next_block->prev != block){
-            return false; 
-        }
-        if(size < 0) return false; 
-        if(size >= 16){
-            return false; 
-        }
-        list_count ++; 
-        block = block -> next; 
-    }
-    block = list32_root; 
-    while(block != list32_tail){
-        if(block == NULL) return false; 
-        block_t* next_block = block -> next; 
-        size_t size = get_size(block); 
-        if(!((char*) block <= (char*) mem_heap_hi() && (char*) mem_heap_lo() <= (char*) block)){
-            return false; 
-        }
-        if(next_block->prev != block){
-            return false; 
-        }
-        if(!(size < 32 && 16 <= size)){
-            return false; 
-        }
-        list_count ++; 
-        block = block -> next; 
-    }
-    block = list64_root; 
-    while(block != list64_tail){
-        if(block == NULL) return false; 
-        block_t* next_block = block -> next; 
+    // Checks consistency of HEAP
+    if (heap_start == NULL)
+        return false;
+    //  if(!(get_alloc(heap_start) && get_alloc(heap_end))) return false;
+    // if(!(get_size(heap_start)==0 && get_size(heap_end)==0)) return false;
+    word_t free_count = 0;
+    block_t *block = heap_start;
+    size_t total_allocated = 0;
+    size_t heap_free = 0;
+    size_t list_free = 0;
+    while (block != heap_end) {
+        if (block == NULL)
+            return false;
+        word_t header = block->header;
+        word_t *footer = header_to_footer(block);
         size_t size = get_size(block);
-        if(!((char*) block <= (char*) mem_heap_hi() && (char*) mem_heap_lo() <= (char*)block)){
-            return false; 
-        } 
-        if(next_block->prev != block){
-            return false; 
+        bool isAlloc = get_alloc(block);
+        if ((((word_t)(block->payload)) & 0xF) != 0) {
+            return false;
         }
-        if(!(size < 64 && 32 <= size)){
-            return false; 
+        if (header != (*footer)) {
+            return false;
         }
-        list_count++; 
-        block = block -> next; 
+        if (size < min_block_size || size < 0) {
+            return false;
+        }
+        if (!isAlloc) {
+            if (!get_alloc(find_next(block))) {
+                return false;
+            }
+            free_count++;
+            heap_free += size;
+        } else {
+            total_allocated += size;
+        }
+        block = find_next(block);
     }
-    block = listMAX_root; 
-    while(block != listMAX_tail){
-        if(block == NULL) return false; 
-        block_t* next_block = block -> next; 
-        size_t size = get_size(block); 
-        if(!((char*) block <= (char*) mem_heap_hi() && (char*) mem_heap_lo() <= (char*) block)){
-            return false; 
+    word_t list_count = 0;
+
+    block = small_root;
+    while (block != NULL) {
+        block_t *next_block = block->next;
+        size_t size = get_size(block);
+        if (next_block == NULL && block != small_tail) {
+            return false;
         }
-        if(next_block->prev != block){
-            return false; 
+        if (next_block != NULL && next_block->prev != block) {
+            return false;
         }
-        if(!(64 <= size)){
-            return false; 
+        if (!(size < SMALL)) {
+            return false;
         }
-        list_count++; 
-        block = block -> next; 
+        list_count++;
+        list_free += size;
+        block = block->next;
     }
-    if(list_count != free_count) return false; 
-    return true; 
+
+    block = medium_root;
+    while (block != NULL) {
+        block_t *next_block = block->next;
+        size_t size = get_size(block);
+        if (next_block == NULL && block != medium_tail) {
+            return false;
+        }
+        if (next_block != NULL && next_block->prev != block) {
+            return false;
+        }
+        if (!(SMALL <= size && size < MEDIUM)) {
+            return false;
+        }
+        list_count++;
+        list_free += size;
+        block = block->next;
+    }
+
+    block = large_root;
+    while (block != NULL) {
+        block_t *next_block = block->next;
+        size_t size = get_size(block);
+        if (next_block == NULL && block != large_tail) {
+            return false;
+        }
+        if (next_block != NULL && next_block->prev != block) {
+            return false;
+        }
+        if (!(MEDIUM <= size && size < LARGE)) {
+            return false;
+        }
+        list_count++;
+        list_free += size;
+        block = block->next;
+    }
+    block = MAX_root;
+    while (block != NULL) {
+        block_t *next_block = block->next;
+        size_t size = get_size(block);
+        if (next_block == NULL && block != MAX_tail) {
+            return false;
+        }
+        if (next_block != NULL && next_block->prev != block) {
+            return false;
+        }
+        if (!(LARGE <= size)) {
+            return false;
+        }
+        list_count++;
+        list_free += size;
+        block = block->next;
+    }
+    // printf("list free total is: %lu, list count total is: %lu \n", list_free,
+    // list_count); printf("heap free total is: %lu, heap count total is: %lu
+    // \n", heap_free, free_count);
+    printf("total allocated: %lu \n", total_allocated);
+    if (list_count != free_count || list_free != heap_free) {
+        printf("not match");
+        return false;
+    }
+    return true;
 }
 
 /**
@@ -915,15 +904,15 @@ bool mm_checkheap(int line) {
 bool mm_init(void) {
     // Create the initial empty heap
     word_t *start = (word_t *)(mem_sbrk(2 * wsize));
-    list16_root = NULL; 
-    list16_tail = NULL; 
-    list32_root = NULL; 
-    list32_tail = NULL; 
-    list64_root = NULL; 
-    list64_tail = NULL; 
-    listMAX_root = NULL; 
-    listMAX_tail = NULL; 
-    
+    small_root = NULL;
+    small_tail = NULL;
+    medium_root = NULL;
+    medium_tail = NULL;
+    large_root = NULL;
+    large_tail = NULL;
+    MAX_root = NULL;
+    MAX_tail = NULL;
+
     if (start == (void *)-1) {
         return false;
     }
@@ -932,7 +921,7 @@ bool mm_init(void) {
 
     // Heap starts with first "block header", currently the epilogue
     heap_start = (block_t *)&(start[1]);
-    heap_end = heap_start; 
+    heap_end = heap_start;
 
     // Extend the empty heap with a free block of chunksize bytes
     if (extend_heap(chunksize) == NULL) {
@@ -955,7 +944,7 @@ bool mm_init(void) {
  */
 
 void *malloc(size_t size) {
-    dbg_requires(mm_checkheap(__LINE__));
+    //  dbg_requires(mm_checkheap(__LINE__));
 
     size_t asize;      // Adjusted block size
     size_t extendsize; // Amount to extend heap if no fit is found
@@ -974,7 +963,7 @@ void *malloc(size_t size) {
     }
 
     // Adjust block size to include overhead and to meet alignment requirements
-    asize = round_up(size + dsize, dsize); 
+    asize = round_up(size + dsize, dsize);
 
     // Search the free list for a fit
     block = find_fit(asize);
@@ -993,6 +982,7 @@ void *malloc(size_t size) {
     // The block should be marked as free
     dbg_assert(!get_alloc(block));
 
+    remove_block(block);
     // Mark block as allocated
     size_t block_size = get_size(block);
     write_block(block, block_size, true);
@@ -1017,7 +1007,7 @@ void *malloc(size_t size) {
  * @param[in] bp
  */
 void free(void *bp) {
-    dbg_requires(mm_checkheap(__LINE__));
+    //  dbg_requires(mm_checkheap(__LINE__));
 
     if (bp == NULL) {
         return;
@@ -1031,10 +1021,8 @@ void free(void *bp) {
 
     // Mark the block as free
     write_block(block, size, false);
-
     // Try to coalesce the block with its neighbors
     coalesce_block(block);
-
     dbg_ensures(mm_checkheap(__LINE__));
 }
 
@@ -1122,7 +1110,7 @@ void *calloc(size_t elements, size_t size) {
     return bp;
 }
 
-/** 
+/**
  *****************************************************************************
  * Do not delete the following super-secret(tm) lines!                       *
  *                                                                           *
