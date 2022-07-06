@@ -116,12 +116,13 @@ static const size_t chunksize = (1 << 12);
 /**
  * TODO: explain what alloc_mask is
  */
-static const word_t alloc_mask = 0x1;
+static const word_t alloc_mask = 0x1; 
 
 /**
  * TODO: explain what size_mask is
  */
 static const word_t size_mask = ~(word_t)0xF;
+
 
 /** @brief Represents the header and payload of one block in the heap */
 typedef struct block {
@@ -148,7 +149,14 @@ typedef struct block {
      * should use a union to alias this zero-length array with another struct,
      * in order to store additional types of data in the payload memory.
      */
-    char payload[0];
+    union {
+        struct{
+            struct block* prev; 
+            struct block* next; 
+        };
+        char payload[0];
+    
+    }; 
 
     /*
      * TODO: delete or replace this comment once you've thought about it.
@@ -158,10 +166,27 @@ typedef struct block {
      */
 } block_t;
 
+
 /* Global variables */
 
 /** @brief Pointer to first block in the heap */
 static block_t *heap_start = NULL;
+static block_t *heap_end = NULL; 
+
+static block_t *list16_root = NULL; 
+static block_t *list16_tail = NULL; 
+
+static block_t *list32_root = NULL; 
+static block_t *list32_tail = NULL; 
+
+static block_t *list64_root = NULL; 
+static block_t *list64_tail = NULL; 
+
+
+static block_t *listMAX_root = NULL; 
+static block_t *listMAX_tail = NULL; 
+
+
 
 /*
  *****************************************************************************
@@ -182,6 +207,8 @@ static block_t *heap_start = NULL;
  *                        BEGIN SHORT HELPER FUNCTIONS
  * ---------------------------------------------------------------------------
  */
+
+
 
 /**
  * @brief Returns the maximum of two integers.
@@ -360,7 +387,6 @@ static void write_block(block_t *block, size_t size, bool alloc) {
     word_t *footerp = header_to_footer(block);
     *footerp = pack(size, alloc);
 }
-
 /**
  * @brief Finds the next consecutive block on the heap.
  *
@@ -435,23 +461,183 @@ static block_t *find_prev(block_t *block) {
  * @return
  */
 static block_t *coalesce_block(block_t *block) {
-    /*
-     * TODO: delete or replace this comment once you're done.
-     *
-     * Before you start, it will be helpful to review the "Dynamic Memory
-     * Allocation: Basic" lecture, and especially the four coalescing
-     * cases that are described.
-     *
-     * The actual content of the function will probably involve a call to
-     * find_prev(), and multiple calls to write_block(). For examples of how
-     * to use write_block(), take a look at split_block().
-     *
-     * Please do not reference code from prior semesters for this, including
-     * old versions of the 213 website. We also discourage you from looking
-     * at the malloc code in CS:APP and K&R, which make heavy use of macros
-     * and which we no longer consider to be good style.
-     */
-    return block;
+    //First block in the heap 
+    bool is_next_alloc = get_alloc(find_next(block)); 
+    bool is_prev_alloc;
+    if(find_prev(block)==NULL){
+        is_prev_alloc = true; 
+    }
+    else{
+        is_prev_alloc= get_alloc(find_prev(block)); 
+    }
+    size_t size = get_size(block); 
+    //Case 1: Allocated blocks on both sides 
+    if(is_prev_alloc&&is_next_alloc){
+        size_t curr_size = size; 
+        write_block(block, curr_size, false); 
+        if(curr_size < 16){ 
+            (*block).next = NULL; 
+            (*block).prev= list16_tail;
+            list16_tail = block;  
+            if(list16_root == NULL){
+                list16_root = block; 
+            }
+        }
+        if(16 <= curr_size && curr_size < 32){
+            (*block).next = NULL; 
+            (*block).prev= list32_tail;
+            list32_tail = block;  
+            if(list32_root == NULL){
+                list32_root = block; 
+            }
+        }
+        if(32 <= curr_size && curr_size < 64){
+            (*block).next = NULL; 
+            (*block).prev= list64_tail;
+            list64_tail = block;  
+            if(list64_root == NULL){
+                list64_root = block; 
+            }
+        }
+        if(64 <= curr_size){
+            (*block).next = NULL; 
+            (*block).prev= listMAX_tail;
+            listMAX_tail = block;  
+            if(listMAX_root == NULL){
+                listMAX_root = block; 
+            }
+        }
+        return block; 
+    }
+    //Case 2: Free blocks on both sides
+    else if(!is_prev_alloc&&!is_next_alloc){
+        block_t* left = footer_to_header(find_prev_footer(block)); 
+        block_t* right = find_next(block); 
+        size_t right_size = get_size(right); 
+        size_t left_size = get_size(left); 
+        write_block(left, left_size + right_size + size, false);
+
+        size_t curr_size = get_size(left); 
+        if(curr_size < 16){ 
+            left->next = NULL; 
+            left->prev= list16_tail;
+            list16_tail = left;  
+            if(list16_root == NULL){
+                list16_root = left; 
+            }
+        }
+        if(16 <= curr_size && curr_size < 32){
+            left->next = NULL; 
+            left->prev= list32_tail;
+            list32_tail = left;  
+            if(list32_root == NULL){
+                list32_root = left; 
+            }
+        }
+        if(32 <= curr_size && curr_size < 64){
+            left->next = NULL; 
+            left->prev= list64_tail;
+            list64_tail = left;  
+            if(list64_root == NULL){
+                list64_root = left; 
+            }
+        }
+        if(64 <= curr_size){
+            left->next = NULL; 
+            left->prev= listMAX_tail;
+            listMAX_tail = left;  
+            if(listMAX_root == NULL){
+                listMAX_root = left; 
+            }
+        }
+        return left;
+
+    }
+    //Case 3: Free block on the left and allocated block on right 
+    else if(!is_prev_alloc&&is_next_alloc){
+        block_t* left = footer_to_header(find_prev_footer(block)); 
+        size_t left_size = get_size(left); 
+        write_block(left, left_size + size, false);
+       
+        size_t curr_size = get_size(left); 
+        if(curr_size < 16){ 
+            left->next = NULL; 
+            left->prev= list16_tail;
+            list16_tail = left;  
+            if(list16_root == NULL){
+                list16_root = left; 
+            }
+        }
+        if(16 <= curr_size && curr_size < 32){
+            left->next = NULL; 
+            left->prev= list32_tail;
+            list32_tail = left;  
+            if(list32_root == NULL){
+                list32_root = left; 
+            }
+        }
+        if(32 <= curr_size && curr_size < 64){
+            left->next = NULL; 
+            left->prev= list64_tail;
+            list64_tail = left;  
+            if(list64_root == NULL){
+                list64_root = left; 
+            }
+        }
+        if(64 <= curr_size){
+            left->next = NULL; 
+            left->prev= listMAX_tail;
+            listMAX_tail = left;  
+            if(listMAX_root == NULL){
+                listMAX_root = left; 
+            }
+        }
+        return left; 
+
+
+    }
+    //Case 4: Allocated block on the right and free block on left 
+    else{
+        block_t* right = find_next(block); 
+        size_t right_size = get_size(right); 
+        write_block(block, right_size + size, false);
+        
+        size_t curr_size = get_size(block); 
+        if(curr_size < 16){ 
+            block->next = NULL; 
+            block->prev= list16_tail;
+            list16_tail = block;  
+            if(list16_root == NULL){
+                list16_root = block; 
+            }
+        }
+        if(16 <= curr_size && curr_size < 32){
+            block->next = NULL; 
+            block->prev= list32_tail;
+            list32_tail = block;  
+            if(list32_root == NULL){
+                list32_root = block; 
+            }
+        }
+        if(32 <= curr_size && curr_size < 64){
+            block->next = NULL; 
+            block->prev= list64_tail;
+            list64_tail = block;  
+            if(list64_root == NULL){
+                list64_root = block; 
+            }
+        }
+        if(64 <= curr_size){
+            block->next = NULL; 
+            block->prev= listMAX_tail;
+            listMAX_tail = block;  
+            if(listMAX_root == NULL){
+                listMAX_root = block; 
+            }
+        }
+        return block; 
+    }
+
 }
 
 /**
@@ -474,13 +660,6 @@ static block_t *extend_heap(size_t size) {
         return NULL;
     }
 
-    /*
-     * TODO: delete or replace this comment once you've thought about it.
-     * Think about what bp represents. Why do we write the new block
-     * starting one word BEFORE bp, but with the same size that we
-     * originally requested?
-     */
-
     // Initialize free block header/footer
     block_t *block = payload_to_header(bp);
     write_block(block, size, false);
@@ -488,6 +667,7 @@ static block_t *extend_heap(size_t size) {
     // Create new epilogue header
     block_t *block_next = find_next(block);
     write_epilogue(block_next);
+    heap_end = block_next; 
 
     // Coalesce in case the previous block was free
     block = coalesce_block(block);
@@ -537,11 +717,71 @@ static void split_block(block_t *block, size_t asize) {
 static block_t *find_fit(size_t asize) {
     block_t *block;
 
-    for (block = heap_start; get_size(block) > 0; block = find_next(block)) {
-
-        if (!(get_alloc(block)) && (asize <= get_size(block))) {
-            return block;
+    if(asize < 16){
+        if(list16_root != NULL){
+            block = list16_root; 
+            while(block!=NULL && block != list16_tail){
+                if(get_size(block) >= asize){
+                    return block; 
+                }
+                block = block->next; 
+            }
+        }    
+        if(list32_root != NULL){
+            return list32_root; 
         }
+        if(list64_root != NULL){
+            return list64_root; 
+        }
+        if(listMAX_root != NULL){
+            return listMAX_root; 
+        }
+        return NULL; 
+    }
+    if(16 <= asize && asize < 32){
+        if(list32_root != NULL){
+            block = list32_root; 
+            while(block!=NULL && block != list32_tail){
+                if(get_size(block) >= asize){
+                    return block; 
+                }
+                block = block->next; 
+            }
+        }    
+        if(list64_root != NULL){
+            return list64_root; 
+        }
+        if(listMAX_root != NULL){
+            return listMAX_root; 
+        }
+        return NULL; 
+    }
+    if(32 <= asize && asize < 64){
+        if(list64_root != NULL){
+            block = list64_root; 
+            while(block!=NULL && block != list64_tail){
+                if(get_size(block) >= asize){
+                    return block; 
+                }
+                block = block->next; 
+            }
+        }    
+        if(listMAX_root != NULL){
+            return listMAX_root; 
+        }
+        return NULL; 
+    }
+    if(64 <= asize){
+        if(listMAX_root != NULL){
+            block = listMAX_root; 
+            while(block!=NULL && block != listMAX_tail){
+                if(get_size(block) >= asize){
+                    return block; 
+                }
+                block = block->next; 
+            }
+        }   
+        return NULL; 
     }
     return NULL; // no fit found
 }
@@ -558,20 +798,108 @@ static block_t *find_fit(size_t asize) {
  * @return
  */
 bool mm_checkheap(int line) {
-    /*
-     * TODO: Delete this comment!
-     *
-     * You will need to write the heap checker yourself.
-     * Please keep modularity in mind when you're writing the heap checker!
-     *
-     * As a filler: one guacamole is equal to 6.02214086 x 10**23 guacas.
-     * One might even call it...  the avocado's number.
-     *
-     * Internal use only: If you mix guacamole on your bibimbap,
-     * do you eat it with a pair of chopsticks, or with a spoon?
-     */
-    dbg_printf("I did not write a heap checker (called at line %d)\n", line);
-    return true;
+    //Checks consistency of HEAP 
+    if(heap_start == NULL || heap_end == NULL) return false; 
+    if(!(get_alloc(heap_start) && get_alloc(heap_end))) return false; 
+    if(!(get_size(heap_start)==0 && get_size(heap_end)==0)) return false; 
+    int free_count = 0; 
+    block_t* block = heap_start; 
+    while(block!= heap_end){
+        if(block == NULL) return false; 
+        word_t header = block->header; 
+        word_t* footer = header_to_footer(block); 
+        size_t size = get_size(block); 
+        bool isAlloc = get_alloc(block); 
+        if(!(block <= heap_end && block >= heap_start)) return false; 
+        if( (((word_t) (block -> payload)) & 0xF) == 0){
+            return false; 
+        }
+        if(header != (*footer)){
+            return false; 
+        }
+        if(size < min_block_size || size < 0){
+            return false; 
+        }
+        if(!isAlloc){
+            if(!get_alloc(find_next(block))){
+                return false; 
+            }
+            free_count++; 
+        }
+        block = find_next(block); 
+    }
+    int list_count = 0;
+    block = list16_root; 
+    while(block != list16_tail){
+        if(block == NULL) return false; 
+        block_t* next_block = block -> next; 
+        size_t size = get_size(block); 
+        if(!((char*) block <= (char*) mem_heap_hi() && (char*) mem_heap_lo() <= (char*) block)){
+            return false; 
+        }
+        if(next_block->prev != block){
+            return false; 
+        }
+        if(size < 0) return false; 
+        if(size >= 16){
+            return false; 
+        }
+        list_count ++; 
+        block = block -> next; 
+    }
+    block = list32_root; 
+    while(block != list32_tail){
+        if(block == NULL) return false; 
+        block_t* next_block = block -> next; 
+        size_t size = get_size(block); 
+        if(!((char*) block <= (char*) mem_heap_hi() && (char*) mem_heap_lo() <= (char*) block)){
+            return false; 
+        }
+        if(next_block->prev != block){
+            return false; 
+        }
+        if(!(size < 32 && 16 <= size)){
+            return false; 
+        }
+        list_count ++; 
+        block = block -> next; 
+    }
+    block = list64_root; 
+    while(block != list64_tail){
+        if(block == NULL) return false; 
+        block_t* next_block = block -> next; 
+        size_t size = get_size(block);
+        if(!((char*) block <= (char*) mem_heap_hi() && (char*) mem_heap_lo() <= (char*)block)){
+            return false; 
+        } 
+        if(next_block->prev != block){
+            return false; 
+        }
+        if(!(size < 64 && 32 <= size)){
+            return false; 
+        }
+        list_count++; 
+        block = block -> next; 
+    }
+    block = listMAX_root; 
+    while(block != listMAX_tail){
+        if(block == NULL) return false; 
+        block_t* next_block = block -> next; 
+        size_t size = get_size(block); 
+        if(!((char*) block <= (char*) mem_heap_hi() && (char*) mem_heap_lo() <= (char*) block)){
+            return false; 
+        }
+        if(next_block->prev != block){
+            return false; 
+        }
+        if(!(64 <= size)){
+            return false; 
+        }
+        list_count++; 
+        block = block -> next; 
+    }
+    if(list_count != free_count) return false; 
+    return true; 
 }
 
 /**
@@ -587,22 +915,24 @@ bool mm_checkheap(int line) {
 bool mm_init(void) {
     // Create the initial empty heap
     word_t *start = (word_t *)(mem_sbrk(2 * wsize));
-
+    list16_root = NULL; 
+    list16_tail = NULL; 
+    list32_root = NULL; 
+    list32_tail = NULL; 
+    list64_root = NULL; 
+    list64_tail = NULL; 
+    listMAX_root = NULL; 
+    listMAX_tail = NULL; 
+    
     if (start == (void *)-1) {
         return false;
     }
-
-    /*
-     * TODO: delete or replace this comment once you've thought about it.
-     * Think about why we need a heap prologue and epilogue. Why do
-     * they correspond to a block footer and header respectively?
-     */
-
     start[0] = pack(0, true); // Heap prologue (block footer)
     start[1] = pack(0, true); // Heap epilogue (block header)
 
     // Heap starts with first "block header", currently the epilogue
     heap_start = (block_t *)&(start[1]);
+    heap_end = heap_start; 
 
     // Extend the empty heap with a free block of chunksize bytes
     if (extend_heap(chunksize) == NULL) {
@@ -623,6 +953,7 @@ bool mm_init(void) {
  * @param[in] size
  * @return
  */
+
 void *malloc(size_t size) {
     dbg_requires(mm_checkheap(__LINE__));
 
@@ -643,7 +974,7 @@ void *malloc(size_t size) {
     }
 
     // Adjust block size to include overhead and to meet alignment requirements
-    asize = round_up(size + dsize, dsize);
+    asize = round_up(size + dsize, dsize); 
 
     // Search the free list for a fit
     block = find_fit(asize);
@@ -791,7 +1122,7 @@ void *calloc(size_t elements, size_t size) {
     return bp;
 }
 
-/*
+/** 
  *****************************************************************************
  * Do not delete the following super-secret(tm) lines!                       *
  *                                                                           *
