@@ -16,7 +16,7 @@
  *
  *************************************************************************
  *
- * @author Your Name <andrewid@andrew.cmu.edu>
+ * @author Haocheng Yang hryang@andrew.cmu.edu
  */
 
 #include <assert.h>
@@ -47,6 +47,8 @@
 #define SMALL 64
 #define MEDIUM 1024
 #define LARGE 8192
+#define SIZE 7
+#define BASE 64
 /*
  *****************************************************************************
  * If DEBUG is defined (such as when running mdriver-dbg), these macros      *
@@ -165,24 +167,17 @@ typedef struct block {
      */
 } block_t;
 
+typedef struct list {
+    block_t *root;
+    block_t *tail;
+} list_t;
+
 /* Global variables */
 
 /** @brief Pointer to first block in the heap */
 static block_t *heap_start = NULL;
+static list_t root[SIZE];
 static block_t *heap_end = NULL;
-
-static block_t *small_root = NULL;
-static block_t *small_tail = NULL;
-
-static block_t *medium_root = NULL;
-static block_t *medium_tail = NULL;
-
-static block_t *large_root = NULL;
-static block_t *large_tail = NULL;
-
-static block_t *MAX_root = NULL;
-static block_t *MAX_tail = NULL;
-
 /*
  *****************************************************************************
  * The functions below are short wrapper functions to perform                *
@@ -211,6 +206,20 @@ static block_t *MAX_tail = NULL;
  */
 static size_t max(size_t x, size_t y) {
     return (x > y) ? x : y;
+}
+static size_t find_index(size_t size) {
+    size_t base = BASE;
+    size_t counter = 0;
+    for (; counter < SIZE; counter++) {
+        if (base >= size) {
+            return counter;
+        }
+        base *= 2;
+    }
+    if (counter == SIZE) {
+        return SIZE - 1;
+    }
+    return counter;
 }
 
 /**
@@ -441,58 +450,20 @@ static block_t *find_prev(block_t *block) {
  */
 
 /******** The remaining content below are helper and debug routines ********/
+
 static void remove_block(block_t *block) {
+    size_t index = find_index(get_size(block));
     if (block->prev == NULL && block->next == NULL) {
-        if (block == small_root) {
-            small_root = NULL;
-            small_tail = NULL;
-        }
-        if (block == medium_root) {
-            medium_root = NULL;
-            medium_tail = NULL;
-        }
-        if (block == large_root) {
-            large_root = NULL;
-            large_tail = NULL;
-        }
-        if (block == MAX_root) {
-            MAX_root = NULL;
-            MAX_tail = NULL;
+        if (block == root[index].root) {
+            root[index].root = NULL;
+            root[index].tail = NULL;
         }
     } else if (block->prev == NULL && block->next != NULL) {
-        if (block == small_root) {
-            small_root = block->next;
-            block->next->prev = NULL;
-        }
-        if (block == medium_root) {
-            medium_root = block->next;
-            block->next->prev = NULL;
-        }
-        if (block == large_root) {
-            large_root = block->next;
-            block->next->prev = NULL;
-        }
-        if (block == MAX_root) {
-            MAX_root = block->next;
-            block->next->prev = NULL;
-        }
+        block->next->prev = NULL;
+        root[index].root = block->next;
     } else if (block->prev != NULL && block->next == NULL) {
-        if (block == small_tail) {
-            small_tail = block->prev;
-            block->prev->next = NULL;
-        }
-        if (block == medium_tail) {
-            medium_tail = block->prev;
-            block->prev->next = NULL;
-        }
-        if (block == large_tail) {
-            large_tail = block->prev;
-            block->prev->next = NULL;
-        }
-        if (block == MAX_tail) {
-            MAX_tail = block->prev;
-            block->prev->next = NULL;
-        }
+        block->prev->next = NULL;
+        root[index].tail = block->prev;
     } else {
         block->prev->next = block->next;
         block->next->prev = block->prev;
@@ -500,58 +471,21 @@ static void remove_block(block_t *block) {
 }
 
 static block_t *insert(block_t *block) {
-    size_t curr_size = get_size(block);
-    if (curr_size < SMALL) {
-        if (small_root == NULL) {
-            small_root = block;
-            small_tail = block;
-            block->next = NULL;
-            block->prev = NULL;
-        } else {
-            block->next = NULL;
-            block->prev = small_tail;
-            small_tail->next = block;
-            small_tail = block;
-        }
-    } else if (SMALL <= curr_size && curr_size < MEDIUM) {
-        if (medium_root == NULL) {
-            medium_root = block;
-            medium_tail = block;
-            block->next = NULL;
-            block->prev = NULL;
-        } else {
-            block->next = NULL;
-            block->prev = medium_tail;
-            medium_tail->next = block;
-            medium_tail = block;
-        }
-    } else if (MEDIUM <= curr_size && curr_size < LARGE) {
-        if (large_root == NULL) {
-            large_root = block;
-            large_tail = block;
-            block->next = NULL;
-            block->prev = NULL;
-        } else {
-            block->next = NULL;
-            block->prev = large_tail;
-            large_tail->next = block;
-            large_tail = block;
-        }
+    size_t index = find_index(get_size(block));
+    if (root[index].root == NULL) {
+        root[index].root = block;
+        root[index].tail = block;
+        block->next = NULL;
+        block->prev = NULL;
     } else {
-        if (MAX_root == NULL) {
-            MAX_root = block;
-            MAX_tail = block;
-            block->next = NULL;
-            block->prev = NULL;
-        } else {
-            block->next = NULL;
-            block->prev = MAX_tail;
-            MAX_tail->next = block;
-            MAX_tail = block;
-        }
+        block->next = NULL;
+        block->prev = root[index].tail;
+        root[index].tail->next = block;
+        root[index].tail = block;
     }
     return block;
 }
+
 /**
  * @brief
  *
@@ -641,7 +575,6 @@ static block_t *extend_heap(size_t size) {
     block_t *block_next = find_next(block);
     write_epilogue(block_next);
     heap_end = block_next;
-
     // Coalesce in case the previous block was free
     block = coalesce_block(block);
 
@@ -690,202 +623,109 @@ static void split_block(block_t *block, size_t asize) {
  * @param[in] asize
  * @return
  */
-static block_t *find_fit(size_t asize) {
-    block_t *block;
 
-    if (asize < SMALL) {
-        if (small_root != NULL) {
-            block = small_root;
-            while (block != NULL) {
-                if (get_size(block) >= asize) {
-                    return block;
-                }
-                block = block->next;
+static block_t *find_fit(size_t asize) {
+    size_t index = find_index(asize);
+    block_t *block;
+    for (size_t i = index; i < SIZE; i++) {
+        block = root[i].root;
+        while (block != NULL) {
+            if (get_size(block) >= asize) {
+                return block;
             }
+            block = block->next;
         }
-        if (medium_root != NULL) {
-            return medium_root;
-        }
-        if (large_root != NULL) {
-            return large_root;
-        }
-        if (MAX_root != NULL) {
-            return MAX_root;
-        }
-        return NULL;
-    } else if (SMALL <= asize && asize < MEDIUM) {
-        if (large_root != NULL) {
-            return large_root;
-        }
-        if (MAX_root != NULL) {
-            return MAX_root;
-        }
-        if (medium_root != NULL) {
-            block = medium_root;
-            while (block != NULL) {
-                if (get_size(block) >= asize) {
-                    return block;
-                }
-                block = block->next;
-            }
-        }
-        return NULL;
-    } else if (MEDIUM <= asize && asize < LARGE) {
-        if (large_root != NULL) {
-            block = large_root;
-            while (block != NULL) {
-                if (get_size(block) >= asize) {
-                    return block;
-                }
-                block = block->next;
-            }
-        }
-        if (MAX_root != NULL) {
-            return MAX_root;
-        }
-        return NULL;
-    } else {
-        if (MAX_root != NULL) {
-            block = MAX_root;
-            while (block != NULL) {
-                if (get_size(block) >= asize) {
-                    return block;
-                }
-                block = block->next;
-            }
-        }
-        return NULL;
     }
-    return NULL; // no fit found
+    return NULL;
 }
 
 /**
  * @brief
  *
- * <What does this function do?>
- * <What are the function's arguments?>
- * <What is the function's return value?>
- * <Are there any preconditions or postconditions?>
+ * Checks the heap invariant everytime the heap is updated
+ * returns true if all invariants are satisifed and false
+ * if any invariants have been violated
  *
- * @param[in] line
  * @return
  */
+
 bool mm_checkheap(int line) {
-    // Checks consistency of HEAP
-    if (heap_start == NULL)
+    word_t *prologue_ptr = ((word_t *)heap_start) - 1;
+    bool prologue_alloc = extract_alloc(*prologue_ptr);
+    size_t prologue_size = extract_size(*prologue_ptr);
+    bool epilogue_alloc = extract_alloc(heap_end->header);
+    size_t epilogue_size = extract_size(heap_end->header);
+    if (!(prologue_alloc && prologue_size == 0)) {
         return false;
-    //  if(!(get_alloc(heap_start) && get_alloc(heap_end))) return false;
-    // if(!(get_size(heap_start)==0 && get_size(heap_end)==0)) return false;
-    word_t free_count = 0;
+    }
+    if (!(epilogue_alloc && epilogue_size == 0)) {
+        return false;
+    }
+    size_t free_blocks_heap = 0;
+    size_t total_free_heap = 0;
+    size_t free_blocks_list = 0;
+    size_t total_free_list = 0;
     block_t *block = heap_start;
-    size_t total_allocated = 0;
-    size_t heap_free = 0;
-    size_t list_free = 0;
     while (block != heap_end) {
-        if (block == NULL)
-            return false;
-        word_t header = block->header;
-        word_t *footer = header_to_footer(block);
         size_t size = get_size(block);
-        bool isAlloc = get_alloc(block);
-        if ((((word_t)(block->payload)) & 0xF) != 0) {
+        word_t header = block->header;
+        word_t footer = *(header_to_footer(block));
+        if (((word_t)(block->payload) & 0xF) != 0) {
             return false;
         }
-        if (header != (*footer)) {
+        if ((word_t)block < (word_t)heap_start) {
             return false;
         }
-        if (size < min_block_size || size < 0) {
+        char *last_byte = ((char *)header_to_footer(block)) + 7;
+        if ((word_t)last_byte >= (word_t)heap_end) {
             return false;
         }
-        if (!isAlloc) {
-            if (!get_alloc(find_next(block))) {
+        if (size < min_block_size) {
+            return false;
+        }
+        if (header != footer) {
+            return false;
+        }
+        if (find_next(block) != heap_end) {
+            if (!get_alloc(block) && !get_alloc(find_next(block))) {
                 return false;
             }
-            free_count++;
-            heap_free += size;
-        } else {
-            total_allocated += size;
+        }
+        if (!get_alloc(block)) {
+            total_free_heap += size;
+            free_blocks_heap++;
         }
         block = find_next(block);
     }
-    word_t list_count = 0;
-
-    block = small_root;
-    while (block != NULL) {
-        block_t *next_block = block->next;
-        size_t size = get_size(block);
-        if (next_block == NULL && block != small_tail) {
-            return false;
+    for (size_t i = 0; i < SIZE; i++) {
+        block = root[i].root;
+        while (block != NULL) {
+            size_t size = get_size(block);
+            if (block->next != NULL) {
+                if (block->next->prev != block) {
+                    return false;
+                }
+            }
+            if ((word_t)block < (word_t)heap_start) {
+                return false;
+            }
+            char *last_byte = ((char *)header_to_footer(block)) + 7;
+            if ((word_t)last_byte >= (word_t)heap_end) {
+                return false;
+            }
+            free_blocks_list++;
+            total_free_list += size;
+            size_t index = find_index(size);
+            if (index != i) {
+                return false;
+            }
+            block = block->next;
         }
-        if (next_block != NULL && next_block->prev != block) {
-            return false;
-        }
-        if (!(size < SMALL)) {
-            return false;
-        }
-        list_count++;
-        list_free += size;
-        block = block->next;
     }
-
-    block = medium_root;
-    while (block != NULL) {
-        block_t *next_block = block->next;
-        size_t size = get_size(block);
-        if (next_block == NULL && block != medium_tail) {
-            return false;
-        }
-        if (next_block != NULL && next_block->prev != block) {
-            return false;
-        }
-        if (!(SMALL <= size && size < MEDIUM)) {
-            return false;
-        }
-        list_count++;
-        list_free += size;
-        block = block->next;
+    if (free_blocks_list != free_blocks_heap) {
+        return false;
     }
-
-    block = large_root;
-    while (block != NULL) {
-        block_t *next_block = block->next;
-        size_t size = get_size(block);
-        if (next_block == NULL && block != large_tail) {
-            return false;
-        }
-        if (next_block != NULL && next_block->prev != block) {
-            return false;
-        }
-        if (!(MEDIUM <= size && size < LARGE)) {
-            return false;
-        }
-        list_count++;
-        list_free += size;
-        block = block->next;
-    }
-    block = MAX_root;
-    while (block != NULL) {
-        block_t *next_block = block->next;
-        size_t size = get_size(block);
-        if (next_block == NULL && block != MAX_tail) {
-            return false;
-        }
-        if (next_block != NULL && next_block->prev != block) {
-            return false;
-        }
-        if (!(LARGE <= size)) {
-            return false;
-        }
-        list_count++;
-        list_free += size;
-        block = block->next;
-    }
-    // printf("list free total is: %lu, list count total is: %lu \n", list_free,
-    // list_count); printf("heap free total is: %lu, heap count total is: %lu
-    // \n", heap_free, free_count);
-    printf("total allocated: %lu \n", total_allocated);
-    if (list_count != free_count || list_free != heap_free) {
-        printf("not match");
+    if (total_free_list != total_free_heap) {
         return false;
     }
     return true;
@@ -904,15 +744,10 @@ bool mm_checkheap(int line) {
 bool mm_init(void) {
     // Create the initial empty heap
     word_t *start = (word_t *)(mem_sbrk(2 * wsize));
-    small_root = NULL;
-    small_tail = NULL;
-    medium_root = NULL;
-    medium_tail = NULL;
-    large_root = NULL;
-    large_tail = NULL;
-    MAX_root = NULL;
-    MAX_tail = NULL;
-
+    for (int i = 0; i < SIZE; i++) {
+        root[i].tail = NULL;
+        root[i].root = NULL;
+    }
     if (start == (void *)-1) {
         return false;
     }
@@ -942,9 +777,8 @@ bool mm_init(void) {
  * @param[in] size
  * @return
  */
-
 void *malloc(size_t size) {
-    //  dbg_requires(mm_checkheap(__LINE__));
+    dbg_requires(mm_checkheap(__LINE__));
 
     size_t asize;      // Adjusted block size
     size_t extendsize; // Amount to extend heap if no fit is found
@@ -1007,7 +841,7 @@ void *malloc(size_t size) {
  * @param[in] bp
  */
 void free(void *bp) {
-    //  dbg_requires(mm_checkheap(__LINE__));
+    dbg_requires(mm_checkheap(__LINE__));
 
     if (bp == NULL) {
         return;
