@@ -49,6 +49,8 @@
 #define LARGE 8192
 #define SIZE 7
 #define BASE 64
+#define ALIGN 0xF
+#define WORD_SHIFT 7
 /*
  *****************************************************************************
  * If DEBUG is defined (such as when running mdriver-dbg), these macros      *
@@ -177,7 +179,6 @@ typedef struct list {
 /** @brief Pointer to first block in the heap */
 static block_t *heap_start = NULL;
 static list_t root[SIZE];
-static block_t *heap_end = NULL;
 /*
  *****************************************************************************
  * The functions below are short wrapper functions to perform                *
@@ -574,7 +575,6 @@ static block_t *extend_heap(size_t size) {
     // Create new epilogue header
     block_t *block_next = find_next(block);
     write_epilogue(block_next);
-    heap_end = block_next;
     // Coalesce in case the previous block was free
     block = coalesce_block(block);
 
@@ -650,11 +650,12 @@ static block_t *find_fit(size_t asize) {
  */
 
 bool mm_checkheap(int line) {
-    word_t *prologue_ptr = ((word_t *)heap_start) - 1;
+    word_t *prologue_ptr = (word_t *)mem_heap_lo();
     bool prologue_alloc = extract_alloc(*prologue_ptr);
     size_t prologue_size = extract_size(*prologue_ptr);
-    bool epilogue_alloc = extract_alloc(heap_end->header);
-    size_t epilogue_size = extract_size(heap_end->header);
+    word_t *heap_end = (word_t *)(((char *)mem_heap_hi()) - WORD_SHIFT);
+    bool epilogue_alloc = extract_alloc(*heap_end);
+    size_t epilogue_size = extract_size(*heap_end);
     if (!(prologue_alloc && prologue_size == 0)) {
         return false;
     }
@@ -666,17 +667,17 @@ bool mm_checkheap(int line) {
     size_t free_blocks_list = 0;
     size_t total_free_list = 0;
     block_t *block = heap_start;
-    while (block != heap_end) {
+    while ((word_t)block != (word_t)heap_end) {
         size_t size = get_size(block);
         word_t header = block->header;
         word_t footer = *(header_to_footer(block));
-        if (((word_t)(block->payload) & 0xF) != 0) {
+        if (((word_t)(block->payload) & ALIGN) != 0) {
             return false;
         }
         if ((word_t)block < (word_t)heap_start) {
             return false;
         }
-        char *last_byte = ((char *)header_to_footer(block)) + 7;
+        char *last_byte = ((char *)header_to_footer(block)) + WORD_SHIFT;
         if ((word_t)last_byte >= (word_t)heap_end) {
             return false;
         }
@@ -686,7 +687,7 @@ bool mm_checkheap(int line) {
         if (header != footer) {
             return false;
         }
-        if (find_next(block) != heap_end) {
+        if ((word_t)find_next(block) != (word_t)heap_end) {
             if (!get_alloc(block) && !get_alloc(find_next(block))) {
                 return false;
             }
@@ -709,7 +710,7 @@ bool mm_checkheap(int line) {
             if ((word_t)block < (word_t)heap_start) {
                 return false;
             }
-            char *last_byte = ((char *)header_to_footer(block)) + 7;
+            char *last_byte = ((char *)header_to_footer(block)) + WORD_SHIFT;
             if ((word_t)last_byte >= (word_t)heap_end) {
                 return false;
             }
@@ -756,7 +757,6 @@ bool mm_init(void) {
 
     // Heap starts with first "block header", currently the epilogue
     heap_start = (block_t *)&(start[1]);
-    heap_end = heap_start;
 
     // Extend the empty heap with a free block of chunksize bytes
     if (extend_heap(chunksize) == NULL) {
