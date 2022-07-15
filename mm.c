@@ -66,7 +66,7 @@
 
 /** @brief the smallest size bucket for the segregated list
  */
-#define BASE 16
+#define BASE 32
 /**
 The alignment requirement for payload in the heap, which is 16 bytes
 */
